@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Dealer OS Executive Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --color-brand-primary:#4600F2;--color-brand-primary-soft:#4600F214;--color-brand-primary-dark:#3500B8;
+    --color-success:#027A48;--color-error:#D13313;--color-info:#3B82F6;
+    --color-text-primary:#1A1A1A;--color-text-secondary:#6B7280;--color-surface:#FFFFFF;
+    --color-page-bg:#F4F5F8;--color-border:#E5E7EB;--radius-md:8px;--radius-lg:12px;
+    --font:"Inter",-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}html,body{margin:0}
+  body{font-family:var(--font);background:var(--color-page-bg);color:var(--color-text-primary);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 56px}
+
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
+  .eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-secondary);margin:0 0 4px}
+  h1{font-size:28px;font-weight:600;letter-spacing:-0.01em;margin:0}
+  .subtitle{font-size:14px;color:var(--color-text-secondary);margin:6px 0 0;max-width:70ch}
+  .head-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+  .synced{font-size:12px;color:var(--color-text-secondary);display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:9999px;background:var(--color-success);display:inline-block}
+  .dot.sample{background:var(--color-info)}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:var(--radius-md);border:none;cursor:pointer;background:var(--color-brand-primary);color:#fff;font-family:var(--font);font-weight:600;font-size:14px;transition:background .15s ease}
+  .btn:hover{background:var(--color-brand-primary-dark)}
+  .btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--color-brand-primary-soft)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn svg{width:16px;height:16px}
+
+  /* segmented lens control */
+  .lens{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+  .lens-label{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-secondary)}
+  .seg{display:inline-flex;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:3px;gap:2px}
+  .seg button{border:none;background:transparent;cursor:pointer;font-family:var(--font);font-size:13px;font-weight:600;color:var(--color-text-secondary);padding:6px 14px;border-radius:6px;transition:all .12s ease}
+  .seg button:hover{color:var(--color-text-primary)}
+  .seg button.active{background:var(--color-brand-primary);color:#fff}
+  .seg button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--color-brand-primary-soft)}
+  .lens-note{font-size:12px;color:var(--color-text-secondary)}
+
+  .banner{background:var(--color-brand-primary-soft);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:12px;color:var(--color-text-primary);margin-bottom:16px;display:none}
+  .banner.show{display:block}
+
+  .kpi{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);display:grid;grid-template-columns:repeat(5,1fr);overflow:hidden}
+  .kpi .cell{padding:20px 22px;border-left:1px solid var(--color-border)}
+  .kpi .cell:first-child{border-left:none}
+  .meta-label{font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-secondary)}
+  .value{font-size:30px;font-weight:700;letter-spacing:-0.01em;margin-top:4px}
+  .subline{font-size:11px;color:var(--color-text-secondary);margin-top:4px}
+  .delta{font-weight:600}.delta.up{color:var(--color-success)}.delta.down{color:var(--color-error)}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:24px}
+  .card h2{font-size:15px;font-weight:600;margin:0 0 2px}
+  .card .card-sub{font-size:12px;color:var(--color-text-secondary);margin:0 0 16px}
+  .chart{width:100%;height:180px}
+
+  .stack{display:flex;height:28px;border-radius:6px;overflow:hidden;margin:4px 0 16px;background:var(--color-page-bg)}
+  .stack .sg{height:100%}
+  .legrow{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid var(--color-border);font-size:13px}
+  .legrow:first-of-type{border-top:none}
+  .legname{display:flex;align-items:center;gap:8px}
+  .swatch{width:10px;height:10px;border-radius:3px;display:inline-block}
+  .legval{color:var(--color-text-secondary)}.legval strong{color:var(--color-text-primary);font-weight:600}
+
+  .hbar{display:grid;grid-template-columns:140px 1fr 52px;align-items:center;gap:10px;margin-bottom:10px;font-size:13px}
+  .hbar .hname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hbar .htrack{background:var(--color-page-bg);border-radius:6px;height:16px;overflow:hidden}
+  .hbar .hfill{background:var(--color-brand-primary);height:100%;border-radius:6px}
+  .hbar .hval{text-align:right;color:var(--color-text-secondary)}
+  .empty{font-size:13px;color:var(--color-text-secondary);padding:8px 0}
+  .hint{color:var(--color-info);font-weight:600}
+  .foot{font-size:12px;color:var(--color-text-secondary);margin-top:28px;border-top:1px solid var(--color-border);padding-top:14px}
+
+  /* password gate */
+  .boot{max-width:1180px;margin:0 auto;padding:60px 24px;color:var(--color-text-secondary);font-size:14px}
+  .gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .gate-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:32px;width:100%;max-width:380px}
+  .gate-title{font-size:22px;font-weight:600;margin:2px 0 4px}
+  .gate-sub{font-size:13px;color:var(--color-text-secondary);margin:0 0 20px}
+  .gate-label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
+  .gate-input{width:100%;height:40px;padding:0 12px;border-radius:var(--radius-md);border:1px solid var(--color-border);font-family:var(--font);font-size:14px}
+  .gate-input:focus{outline:none;border-color:var(--color-brand-primary);box-shadow:0 0 0 3px var(--color-brand-primary-soft)}
+  .gate-err{color:var(--color-error);font-size:13px;margin:10px 0 0}
+  .gate-btn{width:100%;justify-content:center;margin-top:16px}
+
+  @media (max-width:920px){
+    .kpi{grid-template-columns:repeat(2,1fr)}.kpi .cell:nth-child(3){border-left:none}
+    .grid2{grid-template-columns:1fr}.head{flex-direction:column}.head-right{align-items:flex-start}
+    .hbar{grid-template-columns:110px 1fr 48px}
+  }
+</style>
+</head>
+<body>
+  <div id="boot" class="boot">Loading</div>
+
+  <div id="gate" class="gate" hidden>
+    <form class="gate-card" id="gateForm">
+      <p class="eyebrow">Dealer OS</p>
+      <h1 class="gate-title">Executive analytics</h1>
+      <p class="gate-sub">Enter the dashboard password to continue.</p>
+      <label for="pw" class="gate-label">Password</label>
+      <input id="pw" type="password" class="gate-input" autocomplete="current-password" aria-required="true" />
+      <p class="gate-err" id="gateErr" role="alert" hidden></p>
+      <button type="submit" class="btn gate-btn" id="unlockBtn">Unlock</button>
+    </form>
+  </div>
+
+  <main class="wrap" id="app" hidden>
+    <div class="head">
+      <div>
+        <p class="eyebrow">Dealer OS</p>
+        <h1>Executive analytics</h1>
+        <p class="subtitle">Platform activity from Amplitude, last 30 days. India is mostly the internal team, clients are in the US and Europe. Use the lens to see client only numbers.</p>
+      </div>
+      <div class="head-right">
+        <div class="synced"><span class="dot" id="statusDot"></span><span id="syncedText">Loading</span></div>
+        <button class="btn" id="refreshBtn" aria-label="Refresh data">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+
+    <div class="lens">
+      <span class="lens-label">View</span>
+      <div class="seg" id="segCtrl" role="tablist" aria-label="Region lens">
+        <button data-seg="rest" class="active" role="tab">Clients (excl. India)</button>
+        <button data-seg="india" role="tab">India (internal)</button>
+        <button data-seg="all" role="tab">All</button>
+      </div>
+      <span class="lens-note" id="lensNote"></span>
+    </div>
+
+    <div class="banner" id="sampleBanner">Showing sample numbers. The live Amplitude connection is not reachable from this preview. On Vercel with your keys set, this fills with real data.</div>
+
+    <section class="kpi" aria-label="Key metrics">
+      <div class="cell"><div class="meta-label">Monthly active users</div><div class="value num" id="mau">—</div><div class="subline" id="mauSub"></div></div>
+      <div class="cell"><div class="meta-label">Daily active users</div><div class="value num" id="dau">—</div><div class="subline" id="dauSub"></div></div>
+      <div class="cell"><div class="meta-label">Stickiness</div><div class="value num" id="stick">—</div><div class="subline">DAU / MAU</div></div>
+      <div class="cell"><div class="meta-label">Avg session time</div><div class="value num" id="avgSession">—</div><div class="subline" id="avgSub">per session</div></div>
+      <div class="cell"><div class="meta-label">New users</div><div class="value num" id="newUsers">—</div><div class="subline" id="newSub">last 30 days</div></div>
+    </section>
+
+    <div style="margin:18px 0 8px;font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--color-text-secondary)">Product output · last 30 days · all regions</div>
+    <section class="kpi" style="grid-template-columns:repeat(4,1fr)" aria-label="Product output">
+      <div class="cell"><div class="meta-label">Vehicles captured</div><div class="value num" id="poVehicles">—</div><div class="subline" id="poVehiclesSub">VIN scans saved</div></div>
+      <div class="cell"><div class="meta-label">Media processed</div><div class="value num" id="poMedia">—</div><div class="subline">photos, spins, videos</div></div>
+      <div class="cell"><div class="meta-label">Studio sessions</div><div class="value num" id="poStudio">—</div><div class="subline">virtual studio opens</div></div>
+      <div class="cell"><div class="meta-label">Mobile share</div><div class="value num" id="poMobile">—</div><div class="subline" id="poMobileSub">of active users</div></div>
+    </section>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Active users by region</h2>
+        <p class="card-sub">India (internal) vs rest of world (clients), monthly active</p>
+        <div class="stack" id="regionStack" aria-hidden="true"></div>
+        <div id="regionLegend"></div>
+        <p class="subline" id="regionDau" style="margin-top:12px"></p>
+      </div>
+      <div class="card">
+        <h2>Daily active users</h2>
+        <p class="card-sub" id="dauChartSub">Last 30 days</p>
+        <svg class="chart" id="dauChart" role="img" aria-label="Daily active users, last 30 days"></svg>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Avg session time</h2>
+        <p class="card-sub" id="sessChartSub">Last 30 days, in minutes</p>
+        <svg class="chart" id="sessionChart" role="img" aria-label="Average session time, last 30 days"></svg>
+      </div>
+      <div class="card">
+        <h2>Nav tab clicks</h2>
+        <p class="card-sub" id="tabsSub">Unique users per tab, last 30 days</p>
+        <div id="tabsList"><div class="empty">Loading</div></div>
+      </div>
+    </div>
+
+    <p class="foot">Active dealerships, unique devices, and per product splits arrive once the v1 instrumentation ships (see the analytics PRD). Tab and section data uses current Page Viewed instrumentation. Region split is by Amplitude country.</p>
+  </main>
+
+<script>
+// ---------- sample data with per-bucket values ----------
+function days(n){const a=[],d=new Date();for(let i=n-1;i>=0;i--){const x=new Date(d);x.setDate(d.getDate()-i);a.push((x.getMonth()+1)+"/"+x.getDate());}return a;}
+const dauAll=[168,175,181,166,159,141,132,178,190,201,188,176,165,172,199,210,205,193,181,170,158,149,203,214,221,209,198,187,205,212];
+const sessAll=[5.1,5.4,5.9,6.2,5.7,4.8,4.5,6.0,6.3,6.6,6.1,5.8,5.5,5.9,6.4,6.7,6.2,5.9,5.6,5.3,4.9,4.7,6.1,6.5,6.8,6.3,6.0,5.8,6.2,6.2];
+const scaleArr=(a,f)=>a.map(v=>Math.round(v*f));
+const scaleF =(a,f)=>a.map(v=>Math.round(v*f*10)/10);
+const tabsAll=[{name:"Overview",users:642},{name:"Calls",users:511},{name:"Conversations",users:438},{name:"Inbox",users:301},{name:"Customers",users:266},{name:"Appointments",users:198},{name:"Reports",users:154},{name:"Campaigns",users:121}];
+const scaleTabs=(t,f)=>t.map(x=>({name:x.name,users:Math.round(x.users*f)})).sort((a,b)=>b.users-a.users);
+const SAMPLE={
+  source:"sample",updatedAt:new Date().toISOString(),
+  metrics:{
+    mau:{all:{value:1428,delta:6.2},india:{value:1027,delta:7.4},rest:{value:401,delta:4.1}},
+    dau:{all:{value:212,delta:-3.1},india:{value:151,delta:-4.2},rest:{value:61,delta:-1.0}},
+    newUsers:{all:184,india:96,rest:88},
+    avgSessionSec:{all:372,india:300,rest:402}
+  },
+  dauTrend:{labels:days(30),all:dauAll,india:scaleArr(dauAll,0.71),rest:scaleArr(dauAll,0.29)},
+  sessionTrend:{labels:days(30),all:sessAll,india:scaleF(sessAll,0.82),rest:scaleF(sessAll,1.09)},
+  tabs:{all:tabsAll,india:scaleTabs(tabsAll,0.7),rest:scaleTabs(tabsAll,0.3)},
+  regionShare:{india:1027,rest:401,total:1428,indiaShare:71.9,restShare:28.1},
+  productOutput:{
+    vehiclesCaptured:{total:1240,source:"vin_captured"},
+    mediaProcessed:{total:3820,source:"first_media_processing_time"},
+    studioSessions:{total:962,source:"virtual_studio_home"}
+  },
+  platform:{web:352,mobile:149,total:501,webShare:70.3,mobileShare:29.7},
+  splitFlags:{session:true,newUsers:true,tabs:true}
+};
+
+const SEG_LABEL={rest:"Clients (excl. India)",india:"India (internal)",all:"All regions"};
+let DATA=null, SEG="rest";
+
+const fmtInt=(n)=> (n==null)?"—":Number(n).toLocaleString("en-US");
+function deltaHTML(d){
+  if(d==null) return "";
+  const up=d>=0;
+  return '<span class="delta '+(up?"up":"down")+'">'+(up?"▲":"▼")+" "+Math.abs(d).toFixed(1)+'%</span> vs prior 30 days';
+}
+function fmtDuration(sec){if(sec==null)return "—";const m=Math.floor(sec/60),s=Math.round(sec%60);return m+"m "+String(s).padStart(2,"0")+"s";}
+function pick(obj){ // obj has all/india/rest; fall back to all when the bucket is missing
+  if(obj==null) return {v:null,fell:false};
+  const v=obj[SEG];
+  if(v!=null) return {v,fell:false};
+  return {v:obj.all,fell:SEG!=="all"};
+}
+
+function barChart(svg,values,labels){
+  const W=520,H=180,pad={l:8,r:8,t:12,b:22},iw=W-pad.l-pad.r,ih=H-pad.t-pad.b,max=Math.max(...values,1),bw=iw/values.length;
+  let bars="";values.forEach((v,i)=>{const h=Math.max(2,(v/max)*ih),x=pad.l+i*bw+bw*0.15,y=pad.t+ih-h,w=bw*0.7;bars+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="var(--color-brand-primary)"><title>${labels[i]}: ${v}</title></rect>`;});
+  const ticks=[0,Math.floor(values.length/2),values.length-1].map(i=>`<text x="${(pad.l+i*bw+bw/2).toFixed(1)}" y="${H-6}" font-size="10" fill="var(--color-text-secondary)" text-anchor="middle">${labels[i]}</text>`).join("");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);svg.innerHTML=bars+ticks;
+}
+function lineChart(svg,values,labels){
+  const W=520,H=180,pad={l:8,r:8,t:12,b:22},iw=W-pad.l-pad.r,ih=H-pad.t-pad.b,max=Math.max(...values,1),min=Math.min(...values,0),rng=(max-min)||1;
+  const pts=values.map((v,i)=>[pad.l+(i/(values.length-1))*iw,pad.t+ih-((v-min)/rng)*ih]);
+  const d=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+  const area=`M${pts[0][0].toFixed(1)} ${(pad.t+ih).toFixed(1)} `+pts.map(p=>"L"+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ")+` L${pts[pts.length-1][0].toFixed(1)} ${(pad.t+ih).toFixed(1)} Z`;
+  const dots=pts.map((p,i)=>`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.2" fill="var(--color-brand-primary)"><title>${labels[i]}: ${values[i]}</title></circle>`).join("");
+  const ticks=[0,Math.floor(values.length/2),values.length-1].map(i=>`<text x="${pts[i][0].toFixed(1)}" y="${H-6}" font-size="10" fill="var(--color-text-secondary)" text-anchor="middle">${labels[i]}</text>`).join("");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);svg.innerHTML=`<path d="${area}" fill="var(--color-brand-primary-soft)"/><path d="${d}" fill="none" stroke="var(--color-brand-primary)" stroke-width="2"/>${dots}${ticks}`;
+}
+
+function renderRegion(rs){
+  const stack=document.getElementById("regionStack"),leg=document.getElementById("regionLegend"),dauEl=document.getElementById("regionDau");
+  if(!rs||!rs.total){stack.innerHTML="";leg.innerHTML='<div class="empty">Region data not yet available.</div>';dauEl.textContent="";return;}
+  stack.innerHTML=`<div class="sg" style="width:${rs.indiaShare}%;background:var(--color-info)"></div><div class="sg" style="width:${rs.restShare}%;background:var(--color-brand-primary)"></div>`;
+  leg.innerHTML=`
+    <div class="legrow"><span class="legname"><span class="swatch" style="background:var(--color-brand-primary)"></span>Clients (rest of world)</span><span class="legval"><strong class="num">${fmtInt(rs.rest)}</strong> · ${rs.restShare}%</span></div>
+    <div class="legrow"><span class="legname"><span class="swatch" style="background:var(--color-info)"></span>India (internal)</span><span class="legval"><strong class="num">${fmtInt(rs.india)}</strong> · ${rs.indiaShare}%</span></div>`;
+  dauEl.innerHTML=`Internal usage is ${rs.indiaShare}% of monthly active users. The client picture is the "Clients" lens above.`;
+}
+
+function renderTabs(tabsObj){
+  const el=document.getElementById("tabsList");
+  const p=pick(tabsObj), tabs=p.v;
+  document.getElementById("tabsSub").innerHTML="Unique users per tab, last 30 days"+(p.fell?' · <span class="hint">all regions</span>':"");
+  if(!tabs||!tabs.length){el.innerHTML='<div class="empty">No nav tab data yet. This fills in as Nav_Tab_Clicked accumulates.</div>';return;}
+  const max=Math.max(...tabs.map(t=>t.users),1);
+  el.innerHTML=tabs.map(t=>`<div class="hbar"><span class="hname" title="${t.name}">${t.name}</span><div class="htrack"><div class="hfill" style="width:${Math.max(3,(t.users/max)*100)}%"></div></div><span class="hval num">${fmtInt(t.users)}</span></div>`).join("");
+}
+
+function render(){
+  const data=DATA, sample=data.source==="sample";
+  document.getElementById("statusDot").className="dot"+(sample?" sample":"");
+  document.getElementById("syncedText").textContent=(sample?"Sample data":"Live from Amplitude")+" · updated "+new Date(data.updatedAt).toLocaleString("en-US");
+  document.getElementById("sampleBanner").className="banner"+(sample?" show":"");
+  document.getElementById("lensNote").textContent="Showing: "+SEG_LABEL[SEG];
+
+  const m=data.metrics||{};
+  const mau=pick(m.mau), dau=pick(m.dau);
+  document.getElementById("mau").textContent=fmtInt(mau.v&&mau.v.value);
+  document.getElementById("dau").textContent=fmtInt(dau.v&&dau.v.value);
+  document.getElementById("mauSub").innerHTML=(mau.v&&mau.v.delta!=null)?deltaHTML(mau.v.delta):"30 day rolling";
+  document.getElementById("dauSub").innerHTML=(dau.v&&dau.v.delta!=null)?deltaHTML(dau.v.delta):"latest day";
+
+  const stick=(mau.v&&dau.v&&mau.v.value)?Math.round((dau.v.value/mau.v.value)*1000)/10:null;
+  document.getElementById("stick").textContent=(stick!=null)?stick+"%":"—";
+
+  const av=pick(m.avgSessionSec);
+  document.getElementById("avgSession").textContent=fmtDuration(av.v);
+  document.getElementById("avgSub").innerHTML="per session"+(av.fell?' · <span class="hint">all regions</span>':"");
+
+  const nu=pick(m.newUsers);
+  document.getElementById("newUsers").textContent=fmtInt(nu.v);
+  document.getElementById("newSub").innerHTML="last 30 days"+(nu.fell?' · <span class="hint">all regions</span>':"");
+
+  // product output (all regions)
+  const po = data.productOutput || {};
+  document.getElementById("poVehicles").textContent = fmtInt(po.vehiclesCaptured && po.vehiclesCaptured.total);
+  document.getElementById("poVehiclesSub").textContent = (po.vehiclesCaptured && po.vehiclesCaptured.source) ? po.vehiclesCaptured.source : "VIN scans saved";
+  document.getElementById("poMedia").textContent = fmtInt(po.mediaProcessed && po.mediaProcessed.total);
+  document.getElementById("poStudio").textContent = fmtInt(po.studioSessions && po.studioSessions.total);
+  const plat = data.platform;
+  if (plat && plat.total) {
+    document.getElementById("poMobile").textContent = plat.mobileShare + "%";
+    document.getElementById("poMobileSub").textContent = fmtInt(plat.mobile) + " mobile users";
+  } else {
+    document.getElementById("poMobile").textContent = "—";
+    document.getElementById("poMobileSub").textContent = "of active users";
+  }
+
+  renderRegion(data.regionShare);
+  renderTabs(data.tabs);
+
+  const dt=pick(data.dauTrend?{all:data.dauTrend.all,india:data.dauTrend.india,rest:data.dauTrend.rest}:null);
+  document.getElementById("dauChartSub").innerHTML="Last 30 days";
+  if(dt.v&&dt.v.length) barChart(document.getElementById("dauChart"),dt.v,data.dauTrend.labels);
+
+  const st=pick(data.sessionTrend?{all:data.sessionTrend.all,india:data.sessionTrend.india,rest:data.sessionTrend.rest}:null);
+  document.getElementById("sessChartSub").innerHTML="Last 30 days, in minutes"+(st.fell?' · <span class="hint">all regions</span>':"");
+  if(st.v&&st.v.length) lineChart(document.getElementById("sessionChart"),st.v,data.sessionTrend.labels);
+}
+
+document.getElementById("segCtrl").addEventListener("click",(ev)=>{
+  const b=ev.target.closest("button"); if(!b) return;
+  SEG=b.dataset.seg;
+  [...document.querySelectorAll("#segCtrl button")].forEach(x=>x.classList.toggle("active",x===b));
+  if(DATA) render();
+});
+
+function showApp(){document.getElementById("boot").hidden=true;document.getElementById("gate").hidden=true;document.getElementById("app").hidden=false;}
+function showGate(){document.getElementById("boot").hidden=true;document.getElementById("app").hidden=true;document.getElementById("gate").hidden=false;}
+
+async function load(){
+  const btn=document.getElementById("refreshBtn"); if(btn) btn.disabled=true;
+  try{
+    const res=await fetch("/api/metrics",{cache:"no-store"});
+    if(res.status===401){ showGate(); return; }
+    DATA=(res.status===500)?SAMPLE:await res.json(); // 500 = authed but keys not set yet
+    showApp(); render();
+  }catch(e){
+    // fetch threw (for example opened as a local file): preview with sample data
+    DATA=SAMPLE; showApp(); render();
+  }finally{ if(btn) btn.disabled=false; }
+}
+
+async function submitLogin(e){
+  e.preventDefault();
+  const pw=document.getElementById("pw").value;
+  const err=document.getElementById("gateErr"); err.hidden=true;
+  const b=document.getElementById("unlockBtn"); b.disabled=true;
+  try{
+    const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw})});
+    if(r.ok){ await load(); }
+    else { err.textContent="Wrong password. Try again."; err.hidden=false; }
+  }catch(_){ err.textContent="Could not reach the server. Try again."; err.hidden=false; }
+  finally{ b.disabled=false; }
+}
+
+document.getElementById("gateForm").addEventListener("submit",submitLogin);
+document.getElementById("refreshBtn").addEventListener("click",load);
+load();
+</script>
+</body>
+</html>
