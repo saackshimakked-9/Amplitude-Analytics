@@ -1,22 +1,17 @@
-// Vercel serverless function: GET /api/metrics
+// Vercel serverless function: GET /api/metrics?range=1|7|30
 // Calls Amplitude's Dashboard REST API server-side so the secret key never reaches the browser.
-// Every metric is computed for three buckets: all, india (internal), rest (clients: US/EU/other).
+// Two variants of every number are returned:
+//   clean  = non-Spyne (user property email_id does NOT contain "@spyne.ai") -> the main figure
+//   total  = everyone (incl. internal Spyne team)                            -> the subtitle
+// The `range` param sets the window: 1 day (DAU), 7 days (weekly), 30 days (monthly).
 // Env: AMPLITUDE_API_KEY, AMPLITUDE_SECRET_KEY, optional AMPLITUDE_REGION ("us" default | "eu")
 // Docs: https://www.docs.developers.amplitude.com/analytics/apis/dashboard-rest-api/
 
-const crypto = require("crypto");
+const { sessionUser, gateConfigured } = require("../lib/session");
 
 const BASE = {
   us: "https://amplitude.com/api/2",
   eu: "https://analytics.eu.amplitude.com/api/2",
-};
-
-const tokenFor = (pw) =>
-  crypto.createHmac("sha256", "dealeros-gate").update(pw).digest("base64url");
-const readCookie = (req, name) => {
-  const c = req.headers.cookie || "";
-  const m = c.match(new RegExp("(?:^|; )" + name + "=([^;]+)"));
-  return m ? decodeURIComponent(m[1]) : null;
 };
 
 const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
@@ -30,22 +25,15 @@ const lastNonNull = (a) => {
   for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i];
   return null;
 };
-const sumArr = (a) => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
-const flatLabel = (l) => (Array.isArray(l) ? l.join(" / ") : l);
-const addSeries = (a, b) => {
-  const n = Math.max(a?.length || 0, b?.length || 0);
-  const out = new Array(n).fill(0);
-  for (let i = 0; i < n; i++) out[i] = (Number(a?.[i]) || 0) + (Number(b?.[i]) || 0);
-  return out;
+const avgNonNull = (a) => {
+  const v = (a || []).filter((x) => x != null).map(Number);
+  return v.length ? Math.round(v.reduce((x, y) => x + y, 0) / v.length) : null;
 };
-const tail = (a, n) => (a || []).slice(Math.max(0, (a || []).length - n));
-const deltaPct = (now, prev) => (now != null && prev) ? Math.round(((now - prev) / prev) * 1000) / 10 : null;
 
 module.exports = async (req, res) => {
-  // Password gate: if DASHBOARD_PASSWORD is set, require the cookie from /api/login.
-  const gate = process.env.DASHBOARD_PASSWORD;
-  if (gate && readCookie(req, "dash") !== tokenFor(gate)) {
-    res.status(401).json({ error: "unauthorized", message: "Enter the dashboard password." });
+  // Access gate: when a shared password is configured, require a valid spyne.ai session.
+  if (gateConfigured() && !sessionUser(req)) {
+    res.status(401).json({ error: "unauthorized", message: "Sign in with your spyne.ai email." });
     return;
   }
 
@@ -62,177 +50,121 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const auth = "Basic " + Buffer.from(`${apiKey}:${secret}`).toString("base64");
-  const end = new Date();
-  const d30 = new Date(); d30.setDate(end.getDate() - 30);
-  const d60 = new Date(); d60.setDate(end.getDate() - 60);
-  const e = yyyymmdd(end), s30 = yyyymmdd(d30), s60 = yyyymmdd(d60);
+  const url = new URL(req.url, "http://localhost");
+  const rangeRaw = Number(url.searchParams.get("range"));
+  const range = [1, 7, 30].includes(rangeRaw) ? rangeRaw : 30;
+  const trendDays = range === 1 ? 7 : range; // a one-day line is a single dot, so show 7 days of context
 
-  const get = async (path) => {
-    const r = await fetch(`${base}${path}`, { headers: { Authorization: auth } });
-    if (!r.ok) throw new Error(`${path.split("?")[0]} -> ${r.status}`);
-    return r.json();
+  const auth = "Basic " + Buffer.from(`${apiKey}:${secret}`).toString("base64");
+  const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return yyyymmdd(d); };
+  const e = yyyymmdd(new Date());
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Amplitude caps concurrent Dashboard API calls, so retry on 429 with backoff.
+  const get = async (path, tries = 4) => {
+    for (let a = 0; a < tries; a++) {
+      const r = await fetch(`${base}${path}`, { headers: { Authorization: auth } });
+      if (r.status === 429) { await sleep(400 * (a + 1)); continue; }
+      if (!r.ok) throw new Error(`${path.split("?")[0]} -> ${r.status}`);
+      return r.json();
+    }
+    throw new Error(`${path.split("?")[0]} -> 429 (rate limited)`);
+  };
+  // Run thunks with limited concurrency to stay under Amplitude's cap.
+  const runPool = async (thunks, size = 3) => {
+    let idx = 0;
+    const worker = async () => { while (idx < thunks.length) { const my = idx++; await thunks[my](); } };
+    await Promise.all(Array.from({ length: Math.min(size, thunks.length) }, worker));
   };
   const warnings = [];
   const safe = async (label, fn) => {
     try { return await fn(); } catch (err) { warnings.push(`${label}: ${err.message}`); return null; }
   };
   const enc = (o) => encodeURIComponent(JSON.stringify(o));
-  const S_INDIA = enc([{ prop: "country", op: "is", values: ["India"] }]);
-  const S_REST  = enc([{ prop: "country", op: "is not", values: ["India"] }]);
 
-  // Split a grouped-by-country segmentation response into india / rest / all daily series.
-  const bucketByCountry = (resp) => {
-    const out = { india: [], rest: [], all: [], labels: labelsFromXValues(resp?.data?.xValues) };
-    if (!resp?.data?.series) return out;
-    const labels = (resp.data.seriesLabels || []).map(flatLabel);
-    resp.data.series.forEach((series, i) => {
-      const arr = (series || []).map(Number);
-      if (String(labels[i]).toLowerCase() === "india") out.india = addSeries(out.india, arr);
-      else out.rest = addSeries(out.rest, arr);
-    });
-    out.all = addSeries(out.india, out.rest);
+  // CLEAN filter: exclude the internal Spyne team by email domain (user property "email_id").
+  const cleanQ = "&s=" + enc([{ prop: "gp:email_id", op: "does not contain", values: ["@spyne.ai"] }]);
+  const ev_active = enc({ event_type: "_active" });
+  const ev_tabG = enc({ event_type: "Nav_Tab_Clicked", group_by: [{ type: "event", value: "tab" }] });
+  const firstSeries = (resp) => (resp?.data?.series?.[0] || []).map(Number);
+  const groupVal = (l) => (Array.isArray(l) ? l[l.length - 1] : String(l).split(" / ").pop());
+  const parseTabLast = (j) => {
+    const out = {};
+    const labels = (j?.data?.seriesLabels || []).map(groupVal);
+    (j?.data?.series || []).forEach((s, i) => { out[labels[i]] = lastNonNull((s || []).map(Number)); });
     return out;
   };
 
-  // ---- active users, grouped by country (DAU daily + MAU rolling), 60d for deltas ----
-  const dauGeo = await safe("dau_geo", () =>
-    get(`/events/segmentation?e=${enc({ event_type: "_active" })}&m=uniques&i=1&g=country&start=${s60}&end=${e}`));
-  const mauGeo = await safe("mau_geo", () =>
-    get(`/events/segmentation?e=${enc({ event_type: "_active" })}&m=uniques&i=30&g=country&start=${s60}&end=${e}`));
+  // Rolling unique active users ending today for interval i (1=DAU, 7=WAU, 30=MAU).
+  const active = (i, clean) =>
+    get(`/events/segmentation?e=${ev_active}&m=uniques&i=${i}&start=${daysAgo(i + 5)}&end=${e}${clean ? cleanQ : ""}`)
+      .then((j) => lastNonNull(firstSeries(j)));
+  // Avg session length over the window (mean of daily averages).
+  const session = (clean) =>
+    get(`/sessions/average?start=${daysAgo(range - 1)}&end=${e}${clean ? cleanQ : ""}`)
+      .then((j) => avgNonNull(firstSeries(j)));
+  // Per-tab metric across the window (one rolling bucket): m = uniques (clicks) or totals (views).
+  const tabAgg = (m, clean) =>
+    get(`/events/segmentation?e=${ev_tabG}&m=${m}&i=${range}&start=${daysAgo(range + 5)}&end=${e}${clean ? cleanQ : ""}`)
+      .then(parseTabLast);
+  // Daily active-user trend.
+  const trendSeries = (clean) =>
+    get(`/events/segmentation?e=${ev_active}&m=uniques&i=1&start=${daysAgo(trendDays - 1)}&end=${e}${clean ? cleanQ : ""}`);
 
-  const db = bucketByCountry(dauGeo);
-  const mb = bucketByCountry(mauGeo);
+  const iSet = Array.from(new Set([1, 30, range]));
+  const store = {};
+  const thunks = [];
+  iSet.forEach((i) => {
+    thunks.push(() => safe(`active_clean_${i}`, () => active(i, true)).then((v) => (store["ac" + i] = v)));
+    thunks.push(() => safe(`active_total_${i}`, () => active(i, false)).then((v) => (store["at" + i] = v)));
+  });
+  thunks.push(() => safe("session_clean", () => session(true)).then((v) => (store.sc = v)));
+  thunks.push(() => safe("session_total", () => session(false)).then((v) => (store.st = v)));
+  thunks.push(() => safe("clicks_clean", () => tabAgg("uniques", true)).then((v) => (store.uc = v || {})));
+  thunks.push(() => safe("clicks_total", () => tabAgg("uniques", false)).then((v) => (store.ut = v || {})));
+  thunks.push(() => safe("views_clean", () => tabAgg("totals", true)).then((v) => (store.vc = v || {})));
+  thunks.push(() => safe("views_total", () => tabAgg("totals", false)).then((v) => (store.vt = v || {})));
+  thunks.push(() => safe("trend_clean", () => trendSeries(true)).then((j) => (store.tc = j)));
+  thunks.push(() => safe("trend_total", () => trendSeries(false)).then((j) => (store.tt = j)));
+  await runPool(thunks, 3);
 
-  const bucketMetric = (bk) => {
-    const now = lastNonNull(bk);
-    const prev = bk && bk.length > 31 ? bk[bk.length - 31] : null;
-    return { value: now, delta: deltaPct(now, prev) };
-  };
-  const dau = { all: bucketMetric(db.all), india: bucketMetric(db.india), rest: bucketMetric(db.rest) };
-  const mau = { all: bucketMetric(mb.all), india: bucketMetric(mb.india), rest: bucketMetric(mb.rest) };
+  const pair = (c, t) => ({ clean: c ?? null, total: t ?? null });
+  const dau = pair(store.ac1, store.at1);
+  const mau = pair(store.ac30, store.at30);
+  const activeSel = pair(store["ac" + range], store["at" + range]);
+  const stick = (c, t) => (c != null && t ? Math.round((c / t) * 1000) / 10 : null);
+  const stickiness = pair(stick(store.ac1, store.ac30), stick(store.at1, store.at30));
 
-  const dauTrend = {
-    labels: tail(db.labels, 30),
-    all: tail(db.all, 30), india: tail(db.india, 30), rest: tail(db.rest, 30),
-  };
+  // Per-tab table rows: unique clicks + page views (tab opens), clean main / total sub.
+  const tabKeys = Array.from(new Set([
+    ...Object.keys(store.uc || {}), ...Object.keys(store.ut || {}),
+    ...Object.keys(store.vc || {}), ...Object.keys(store.vt || {}),
+  ])).filter((k) => k && k !== "(none)" && k !== "0");
+  const tabs = tabKeys.map((key) => ({
+    key,
+    clicks: pair(store.uc?.[key], store.ut?.[key]),
+    views: pair(store.vc?.[key], store.vt?.[key]),
+  }));
+  const sumTab = (map) => Object.values(map || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+  const tabOpens = pair(sumTab(store.vc), sumTab(store.vt));
 
-  // ---- new users, grouped by country (30d totals) ----
-  const newGeo = await safe("new_geo", () =>
-    get(`/users?start=${s30}&end=${e}&m=new&i=1&g=country`));
-  let newUsers = { all: null, india: null, rest: null };
-  if (newGeo) {
-    const nb = bucketByCountry(newGeo);
-    newUsers = { all: sumArr(nb.all), india: sumArr(nb.india), rest: sumArr(nb.rest) };
-  } else {
-    const newAll = await safe("new_all", () => get(`/users?start=${s30}&end=${e}&m=new&i=1`));
-    newUsers = { all: sumArr(newAll?.data?.series?.[0]), india: null, rest: null };
-  }
-
-  // ---- avg session length per bucket (segment filters) ----
-  const sess = async (s) => {
-    const q = s ? `&s=${s}` : "";
-    return get(`/sessions/average?start=${s30}&end=${e}${q}`);
+  const trend = {
+    labels: labelsFromXValues(store.tc?.data?.xValues),
+    clean: firstSeries(store.tc),
+    total: firstSeries(store.tt),
   };
-  const sAll = await safe("session_all", () => sess(null));
-  const sIndia = await safe("session_india", () => sess(S_INDIA));
-  const sRest = await safe("session_rest", () => sess(S_REST));
-  const sessSeries = (r) => (r?.data?.series?.[0] || []).map(Number);
-  const sessLabels = labelsFromXValues(sAll?.data?.xValues);
-  const toMin = (a) => a.map((v) => Math.round((v / 60) * 10) / 10);
-  const avgSessionSec = {
-    all: lastNonNull(sessSeries(sAll)),
-    india: sIndia ? lastNonNull(sessSeries(sIndia)) : null,
-    rest: sRest ? lastNonNull(sessSeries(sRest)) : null,
-  };
-  const sessionTrend = {
-    labels: sessLabels,
-    all: toMin(sessSeries(sAll)),
-    india: sIndia ? toMin(sessSeries(sIndia)) : null,
-    rest: sRest ? toMin(sessSeries(sRest)) : null,
-  };
-
-  // ---- nav tab clicks: unique users per tab (Nav_Tab_Clicked by tab) per bucket ----
-  const tabsSeg = async (s) => {
-    const q = s ? `&s=${s}` : "";
-    return get(`/events/segmentation?e=${enc({ event_type: "Nav_Tab_Clicked" })}&m=uniques&i=30&g=tab&start=${s30}&end=${e}${q}`);
-  };
-  const parseTabs = (resp) => {
-    if (!resp?.data?.series) return [];
-    const labels = (resp.data.seriesLabels || []).map(flatLabel);
-    return resp.data.series
-      .map((series, i) => ({ name: labels[i] || "Unknown", users: lastNonNull(series) || 0 }))
-      .filter((t) => t.users > 0)
-      .sort((a, b) => b.users - a.users)
-      .slice(0, 10);
-  };
-  const tAll = await safe("tabs_all", () => tabsSeg(null));
-  const tIndia = await safe("tabs_india", () => tabsSeg(S_INDIA));
-  const tRest = await safe("tabs_rest", () => tabsSeg(S_REST));
-  const tabs = { all: parseTabs(tAll), india: tIndia ? parseTabs(tIndia) : null, rest: tRest ? parseTabs(tRest) : null };
-
-  // region proportion card (from MAU buckets)
-  const iM = mau.india.value || 0, rM = mau.rest.value || 0, tot = iM + rM;
-  const regionShare = tot ? {
-    india: iM, rest: rM, total: tot,
-    indiaShare: Math.round((iM / tot) * 1000) / 10,
-    restShare: Math.round((rM / tot) * 1000) / 10,
-  } : null;
-
-  // ---- product output (daily totals of key product events) ----
-  // Grounded in the live Amplitude taxonomy: VIN capture, media processing, studio sessions.
-  const eventTotals = async (eventType) => {
-    const r = await safe(`total_${eventType}`, () =>
-      get(`/events/segmentation?e=${enc({ event_type: eventType })}&m=totals&i=1&start=${s30}&end=${e}`));
-    const series = (r?.data?.series?.[0] || []).map(Number);
-    const labels = labelsFromXValues(r?.data?.xValues);
-    return { total: sumArr(series), trend: { labels: tail(labels, 30), values: tail(series, 30) } };
-  };
-  // Try primary event name, fall back to an alternate if it has no volume.
-  const firstWithVolume = async (names) => {
-    let out = { total: 0, trend: { labels: [], values: [] }, source: null };
-    for (const n of names) {
-      const r = await eventTotals(n);
-      if (r.total > 0) return { ...r, source: n };
-      if (!out.source) out = { ...r, source: n };
-    }
-    return out;
-  };
-  const productOutput = {
-    vehiclesCaptured: await firstWithVolume(["vin_captured", "vin_details_saved"]),
-    mediaProcessed: await firstWithVolume(["first_media_processing_time"]),
-    studioSessions: await firstWithVolume(["virtual_studio_home", "virtual_studio_landed"]),
-  };
-
-  // ---- platform split: Web vs Mobile (active users) ----
-  const platSeg = await safe("platform", () =>
-    get(`/events/segmentation?e=${enc({ event_type: "_active" })}&m=uniques&i=30&g=platform&start=${s30}&end=${e}`));
-  let platform = null;
-  if (platSeg?.data?.series) {
-    const labels = (platSeg.data.seriesLabels || []).map(flatLabel);
-    let web = 0, mobile = 0;
-    platSeg.data.series.forEach((series, i) => {
-      const v = lastNonNull(series) || 0;
-      const l = String(labels[i]).toLowerCase();
-      if (l.includes("web")) web += v; else mobile += v;
-    });
-    const t = web + mobile;
-    platform = t ? { web, mobile, total: t, webShare: Math.round((web / t) * 1000) / 10, mobileShare: Math.round((mobile / t) * 1000) / 10 } : null;
-  }
 
   const payload = {
     source: "amplitude",
     region,
+    auth: gateConfigured(),
     updatedAt: new Date().toISOString(),
-    window: { start: s30, end: e },
-    metrics: { mau, dau, newUsers, avgSessionSec },
-    dauTrend, sessionTrend, tabs, regionShare,
-    productOutput, platform,
-    splitFlags: {
-      session: !!(sIndia && sRest),
-      newUsers: !!newGeo,
-      tabs: !!(tIndia && tRest),
-    },
+    range,
+    trendDays,
+    filtered: "Main = non-Spyne (email_id excludes @spyne.ai). Subtitle = total incl. Spyne team.",
+    metrics: { active: activeSel, dau, mau, stickiness, session: store.sc != null || store.st != null ? pair(store.sc, store.st) : pair(null, null), tabOpens },
+    trend,
+    tabs,
     warnings,
   };
 
