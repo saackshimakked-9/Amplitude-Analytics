@@ -41,6 +41,9 @@
   .kpi{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);display:grid;grid-template-columns:repeat(4,1fr);overflow:hidden}
   .kpi .cell{padding:16px 20px;border-left:1px solid var(--color-border)}
   .kpi .cell:first-child{border-left:none}
+  .kpi.k3{grid-template-columns:repeat(3,1fr)}
+  .rank{display:inline-block;min-width:20px;color:var(--color-text-secondary);font-weight:600;margin-right:8px}
+  .dealer-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
   .meta-label{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--color-text-secondary)}
   .oi{font-size:10px;font-weight:600;color:var(--color-brand-primary);margin-top:6px}
   .value{font-size:26px;font-weight:700;letter-spacing:-0.01em;margin-top:2px}
@@ -110,6 +113,7 @@
 
   @media (max-width:920px){
     .kpi{grid-template-columns:repeat(2,1fr)}.kpi .cell:nth-child(3){border-left:none}
+    .kpi.k3{grid-template-columns:1fr}.kpi.k3 .cell{border-left:none;border-top:1px solid var(--color-border)}.kpi.k3 .cell:first-child{border-top:none}
     .grid{grid-template-columns:repeat(2,1fr)}
     .head{flex-direction:column}.head-right{align-items:flex-start}
   }
@@ -175,6 +179,23 @@
     </div>
 
     <div class="sect">
+      <h2>Dealers</h2>
+    </div>
+    <p class="card-sub" id="dealerSub">Dealership activity for the selected window. Big number excludes the Spyne team, the smaller number is the total.</p>
+    <section class="kpi k3" aria-label="Dealer metrics">
+      <div class="cell"><div class="meta-label" id="dlrActiveLabel">Active dealers</div><div class="oi">Non-Spyne</div><div class="value num" id="dlrActive">—</div><div class="subline">Total <b class="num" id="dlrActiveTotal">—</b></div></div>
+      <div class="cell"><div class="meta-label" id="dlrClicksLabel">Dealer clicks</div><div class="oi">Non-Spyne</div><div class="value num" id="dlrClicks">—</div><div class="subline">Total <b class="num" id="dlrClicksTotal">—</b></div></div>
+      <div class="cell"><div class="meta-label" id="dlrVisitsLabel">Visits</div><div class="oi">Non-Spyne</div><div class="value num" id="dlrVisits">—</div><div class="subline">Total <b class="num" id="dlrVisitsTotal">—</b></div></div>
+    </section>
+    <p class="card-sub" style="margin:16px 0 0">Top dealers by clicks, highest first.</p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Dealer</th><th>Clicks</th><th>Visits</th></tr></thead>
+        <tbody id="dealerBody"></tbody>
+      </table>
+    </div>
+
+    <div class="sect">
       <h2>By tab</h2>
     </div>
     <p class="card-sub">Unique clicks and page views per tab for the selected window. Big number excludes the Spyne team, the smaller number is the total.</p>
@@ -203,7 +224,7 @@
       </div>
     </div>
 
-    <p class="foot" id="foot">Source: Amplitude (US). Clean data excludes users whose email_id contains @spyne.ai. Page views are Nav_Tab_Clicked tab-open events. Session time is platform-wide (Amplitude sessions are not tab-scoped), so it appears as a KPI, not per tab.</p>
+    <p class="foot" id="foot">Source: Amplitude (US). Clean data excludes users whose email_id contains @spyne.ai. Page views are Nav_Tab_Clicked tab-open events. Session time is platform-wide (Amplitude sessions are not tab-scoped), so it appears as a KPI, not per tab. Dealers are grouped by team_id (rooftop). Visits are session_start events. Active dealers is capped at Amplitude's top 1,000 groups.</p>
   </main>
 
 <script>
@@ -306,9 +327,38 @@ async function load(){
     if(res.status===401){ showGate(); return; }
     var data=(res.status===500)?SAMPLE:await res.json();
     var so=document.getElementById("signoutLink"); if(so) so.hidden=!(data&&data.auth);
-    showApp(); render(data);
+    showApp(); render(data); loadDealers();
   }catch(e){ showApp(); render(SAMPLE); }
   finally{ if(btn) btn.disabled=false; }
+}
+
+// ---------- dealer section ----------
+function renderDealers(data){
+  var win=WIN_LABEL[data.range||30];
+  document.getElementById("dlrActiveLabel").textContent="Active dealers, "+win;
+  document.getElementById("dlrClicksLabel").textContent="Dealer clicks, "+win;
+  document.getElementById("dlrVisitsLabel").textContent="Visits, "+win;
+  var ad=data.activeDealers||{};
+  document.getElementById("dlrActive").textContent=data.cappedClean?"1,000+":fmtInt(ad.clean);
+  document.getElementById("dlrActiveTotal").textContent=data.cappedClean?"1,000+":fmtInt(ad.total);
+  setPair("dlrClicks","dlrClicksTotal",data.clicks);
+  setPair("dlrVisits","dlrVisitsTotal",data.visits);
+  var rows="";
+  (data.top||[]).forEach(function(t,i){
+    rows+='<tr><td><span class="rank">'+(i+1)+'</span><span class="dealer-id">'+String(t.dealer)+'</span></td><td class="cellmain">'+fmtInt(t.clicks)+'</td><td class="cellmain">'+fmtInt(t.visits)+'</td></tr>';
+  });
+  document.getElementById("dealerBody").innerHTML=rows||'<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">No dealer data for this window.</td></tr>';
+}
+async function loadDealers(){
+  var body=document.getElementById("dealerBody");
+  body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Loading dealers…</td></tr>';
+  try{
+    var r=await fetch("/api/dealers?range="+currentRange,{cache:"no-store"});
+    if(r.status===401){ showGate(); return; }
+    var data=await r.json();
+    if(data&&!data.error) renderDealers(data);
+    else body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Dealer data unavailable.</td></tr>';
+  }catch(e){ body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Could not load dealers.</td></tr>'; }
 }
 async function submitLogin(e){
   e.preventDefault();
