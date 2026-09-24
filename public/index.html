@@ -84,6 +84,16 @@
   table.tbl .cellsub{font-size:11px;color:var(--color-text-secondary);font-variant-numeric:tabular-nums;margin-top:1px}
   table.tbl tbody tr:hover{background:var(--color-brand-primary-soft)}
 
+  /* collapsible trends section */
+  .collapse-btn{display:flex;align-items:center;gap:8px;width:100%;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:12px 14px;font-family:var(--font);font-size:15px;font-weight:600;color:var(--color-text-primary);cursor:pointer;text-align:left}
+  .collapse-btn:hover{background:var(--color-brand-primary-soft)}
+  .collapse-btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--color-brand-primary-soft)}
+  .collapse-btn .chev{width:18px;height:18px;transition:transform .15s ease;flex:0 0 auto}
+  .collapse-btn[aria-expanded="true"] .chev{transform:rotate(90deg)}
+  .collapse-btn .muted{font-weight:400;font-size:12px;color:var(--color-text-secondary)}
+  .trends-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:14px 0 2px}
+  .tab .tn .tsum{float:right;font-weight:400;color:var(--color-text-secondary)}
+
   /* sign-in gate */
   .boot{max-width:1160px;margin:0 auto;padding:60px 24px;color:var(--color-text-secondary);font-size:14px}
   .gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -173,6 +183,24 @@
         <thead><tr><th>Tab</th><th>Unique clicks</th><th>Page views</th></tr></thead>
         <tbody id="tblBody"></tbody>
       </table>
+    </div>
+
+    <div class="collapse" style="margin-top:28px">
+      <button type="button" class="collapse-btn" id="trendsToggle" aria-expanded="false" aria-controls="trendsPanel">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+        Page clicks over time <span class="muted">per tab, by day</span>
+      </button>
+      <div id="trendsPanel" hidden>
+        <div class="trends-bar">
+          <div class="seg" role="group" aria-label="Trend window">
+            <button type="button" data-days="7">7 days</button>
+            <button type="button" data-days="30" class="on">30 days</button>
+            <button type="button" data-days="60">60 days</button>
+          </div>
+          <span class="card-sub" id="trendsSub" style="margin:0">Daily page clicks, Spyne team excluded.</span>
+        </div>
+        <div class="grid" id="trendsGrid"></div>
+      </div>
     </div>
 
     <p class="foot" id="foot">Source: Amplitude (US). Clean data excludes users whose email_id contains @spyne.ai. Page views are Nav_Tab_Clicked tab-open events. Session time is platform-wide (Amplitude sessions are not tab-scoped), so it appears as a KPI, not per tab.</p>
@@ -295,13 +323,70 @@ async function submitLogin(e){
   finally{ b.disabled=false; }
 }
 var gf=document.getElementById("gateForm"); if(gf) gf.addEventListener("submit",submitLogin);
-Array.prototype.forEach.call(document.querySelectorAll(".seg button"),function(b){
+Array.prototype.forEach.call(document.querySelectorAll(".seg button[data-range]"),function(b){
   b.addEventListener("click",function(){
     currentRange=Number(b.getAttribute("data-range"));
-    Array.prototype.forEach.call(document.querySelectorAll(".seg button"),function(x){x.classList.toggle("on",x===b);});
+    Array.prototype.forEach.call(document.querySelectorAll(".seg button[data-range]"),function(x){x.classList.toggle("on",x===b);});
     load();
   });
 });
+
+// ---------- collapsible "page clicks over time" section (7 / 30 / 60 days) ----------
+var trendsDays=30, trendsLoaded=false;
+function miniLine(svg,series,labels){
+  series=(series||[]).map(Number);
+  var W=260,H=92,pl=6,pr=8,pt=16,pb=14,iw=W-pl-pr,ih=H-pt-pb;
+  if(!series.length){svg.innerHTML="";return;}
+  var max=Math.max.apply(null,series.concat([1]))*1.25;
+  var p=series.map(function(v,i){return [pl+(i/Math.max(1,series.length-1))*iw, pt+ih-((v||0)/max)*ih];});
+  var line=p.map(function(q,i){return (i?"L":"M")+q[0].toFixed(1)+" "+q[1].toFixed(1);}).join(" ");
+  var area="M"+p[0][0].toFixed(1)+" "+(pt+ih).toFixed(1)+" "+p.map(function(q){return "L"+q[0].toFixed(1)+" "+q[1].toFixed(1);}).join(" ")+" L"+p[p.length-1][0].toFixed(1)+" "+(pt+ih).toFixed(1)+" Z";
+  var last=p[p.length-1], lv=series[series.length-1]||0;
+  var lblLast='<text x="'+last[0].toFixed(1)+'" y="'+(last[1]-5).toFixed(1)+'" font-size="10" fill="#4600F2" text-anchor="end" font-weight="600">'+Number(lv).toLocaleString()+'</text>';
+  var ticks="";
+  if(labels&&labels.length){ticks='<text x="'+pl+'" y="'+(H-3)+'" font-size="8" fill="#9CA3AF">'+labels[0]+'</text><text x="'+(W-pr)+'" y="'+(H-3)+'" font-size="8" fill="#9CA3AF" text-anchor="end">'+labels[labels.length-1]+'</text>';}
+  svg.setAttribute("viewBox","0 0 "+W+" "+H);
+  svg.innerHTML='<path d="'+area+'" fill="#4600F214"/><path d="'+line+'" fill="none" stroke="#4600F2" stroke-width="1.8"/><circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2.4" fill="#4600F2"/>'+lblLast+ticks;
+}
+function renderTrends(data){
+  var grid=document.getElementById("trendsGrid"); grid.innerHTML="";
+  var series=(data&&data.series)||{}, labels=(data&&data.labels)||[], any=false;
+  TAB_ORDER.forEach(function(key){
+    var s=series[key]; if(!s||!s.length) return;
+    var total=s.reduce(function(a,b){return a+(Number(b)||0);},0);
+    if(!total) return;
+    any=true;
+    var el=document.createElement("div"); el.className="tab";
+    el.innerHTML='<div class="tn">'+(TAB_LABELS[key]||key)+'<span class="tsum">'+Number(total).toLocaleString()+'</span></div><svg class="mini" style="height:92px" role="img" aria-label="'+(TAB_LABELS[key]||key)+' clicks by day"></svg>';
+    grid.appendChild(el); miniLine(el.querySelector("svg"),s,labels);
+  });
+  if(!any) grid.innerHTML='<div class="card-sub" style="grid-column:1/-1">No click data for this window.</div>';
+}
+async function loadTrends(){
+  var grid=document.getElementById("trendsGrid");
+  grid.innerHTML='<div class="card-sub" style="grid-column:1/-1">Loading…</div>';
+  document.getElementById("trendsSub").textContent="Daily page clicks over the last "+trendsDays+" days, Spyne team excluded.";
+  try{
+    var r=await fetch("/api/tab-trends?days="+trendsDays,{cache:"no-store"});
+    if(r.status===401){ showGate(); return; }
+    var data=await r.json(); trendsLoaded=true; renderTrends(data);
+  }catch(e){ grid.innerHTML='<div class="card-sub" style="grid-column:1/-1">Could not load trends.</div>'; }
+}
+(function(){
+  var toggle=document.getElementById("trendsToggle"), panel=document.getElementById("trendsPanel");
+  if(toggle) toggle.addEventListener("click",function(){
+    var open=panel.hidden; panel.hidden=!open;
+    toggle.setAttribute("aria-expanded",open?"true":"false");
+    if(open && !trendsLoaded) loadTrends();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("#trendsPanel .seg button[data-days]"),function(b){
+    b.addEventListener("click",function(){
+      trendsDays=Number(b.getAttribute("data-days"));
+      Array.prototype.forEach.call(document.querySelectorAll("#trendsPanel .seg button[data-days]"),function(x){x.classList.toggle("on",x===b);});
+      loadTrends();
+    });
+  });
+})();
 document.getElementById("refreshBtn").addEventListener("click",load);
 load();
 </script>
