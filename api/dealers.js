@@ -60,32 +60,36 @@ module.exports = async (req, res) => {
         return out;
       });
 
+  // Ungrouped window total of an event (accurate: not limited by the 1,000-group cap).
+  const total = (event, clean) =>
+    get(`/events/segmentation?e=${enc({ event_type: event })}&m=totals&i=${range}&start=${daysAgo(range + 5)}&end=${e}${clean ? cleanQ : ""}`)
+      .then((j) => lastNonNull((j?.data?.series?.[0] || []).map(Number)));
+
   const store = {};
   const jobs = [
-    ["clicksClean", () => byDealer("Nav_Tab_Clicked", "totals", true)],
-    ["clicksTotal", () => byDealer("Nav_Tab_Clicked", "totals", false)],
-    ["visitsClean", () => byDealer("session_start", "totals", true)],
-    ["visitsTotal", () => byDealer("session_start", "totals", false)],
-    ["activeClean", () => byDealer("_active", "uniques", true)],
-    ["activeTotal", () => byDealer("_active", "uniques", false)],
+    // KPIs: true platform totals (ungrouped)
+    ["clicksC", () => total("Nav_Tab_Clicked", true)],
+    ["clicksT", () => total("Nav_Tab_Clicked", false)],
+    ["visitsC", () => total("session_start", true)],
+    ["visitsT", () => total("session_start", false)],
+    // Ranking: per-dealer breakdown (clean). Group-by caps at 1,000, which is fine for a top-15.
+    ["byClicks", () => byDealer("Nav_Tab_Clicked", "totals", true)],
+    ["byVisits", () => byDealer("session_start", "totals", true)],
   ];
   await runPool(jobs.map(([k, fn]) => async () => {
-    try { store[k] = await fn(); } catch (err) { warnings.push(`${k}: ${err.message}`); store[k] = {}; }
+    try { store[k] = await fn(); } catch (err) { warnings.push(`${k}: ${err.message}`); store[k] = (k.startsWith("by") ? {} : null); }
   }), 3);
 
   const NONE = (k) => !k || k === "(none)";
   const namedKeys = (m) => Object.keys(m || {}).filter((k) => !NONE(k));
-  const sumAll = (m) => Object.values(m || {}).reduce((a, b) => a + (Number(b) || 0), 0);
   const pair = (c, t) => ({ clean: c, total: t });
 
-  const activeDealers = pair(namedKeys(store.activeClean).length, namedKeys(store.activeTotal).length);
-  const cappedClean = Object.keys(store.activeClean || {}).length >= 1000;
-  const clicks = pair(sumAll(store.clicksClean), sumAll(store.clicksTotal));
-  const visits = pair(sumAll(store.visitsClean), sumAll(store.visitsTotal));
+  const clicks = pair(store.clicksC, store.clicksT);
+  const visits = pair(store.visitsC, store.visitsT);
 
   // Top dealers by clicks (clean), descending.
-  const top = namedKeys(store.clicksClean)
-    .map((id) => ({ dealer: id, clicks: Number(store.clicksClean[id]) || 0, visits: Number((store.visitsClean || {})[id]) || 0 }))
+  const top = namedKeys(store.byClicks)
+    .map((id) => ({ dealer: id, clicks: Number(store.byClicks[id]) || 0, visits: Number((store.byVisits || {})[id]) || 0 }))
     .sort((a, b) => b.clicks - a.clicks)
     .slice(0, 15);
 
@@ -94,8 +98,9 @@ module.exports = async (req, res) => {
     source: "amplitude",
     range,
     labelType: DEALER_LABEL_TYPE,
-    activeDealers,
-    cappedClean,
+    // Exact active-dealer count comes from /api/dealer-count; signal the UI to show "counting…" then fill.
+    activeDealers: pair(null, null),
+    cappedClean: true,
     clicks,
     visits,
     top,

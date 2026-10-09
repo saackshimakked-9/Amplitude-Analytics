@@ -163,10 +163,10 @@
     <div class="banner" id="sampleBanner">Showing sample numbers. On Vercel with your Amplitude keys set, this fills with live data.</div>
 
     <section class="kpi" aria-label="Key metrics">
-      <div class="cell"><div class="meta-label" id="activeLabel">Active users</div><div class="oi">Non-Spyne</div><div class="value num" id="active">—</div><div class="subline">Total <b class="num" id="activeTotal">—</b></div></div>
+      <div class="cell"><div class="meta-label">DAU</div><div class="oi">Unique users, last day</div><div class="value num" id="dau">—</div><div class="subline">Total <b class="num" id="dauTotal">—</b></div></div>
+      <div class="cell"><div class="meta-label">MAU</div><div class="oi">Unique users, 30 days</div><div class="value num" id="mau">—</div><div class="subline">Total <b class="num" id="mauTotal">—</b></div></div>
       <div class="cell"><div class="meta-label">Stickiness</div><div class="oi">DAU / MAU</div><div class="value num" id="stick">—</div><div class="subline">Total <b class="num" id="stickTotal">—</b></div></div>
       <div class="cell"><div class="meta-label" id="sessLabel">Avg session</div><div class="oi">Non-Spyne</div><div class="value num" id="sess">—</div><div class="subline">Total <b class="num" id="sessTotal">—</b></div></div>
-      <div class="cell"><div class="meta-label" id="opensLabel">Page views</div><div class="oi">Non-Spyne</div><div class="value num" id="opens">—</div><div class="subline">Total <b class="num" id="opensTotal">—</b></div></div>
     </section>
 
     <div class="card">
@@ -190,7 +190,7 @@
     <p class="card-sub" style="margin:16px 0 0">Top dealers by clicks, highest first.</p>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>Dealer</th><th>Clicks</th><th>Visits</th></tr></thead>
+        <thead><tr><th>Dealership (team ID)</th><th>Clicks</th><th>Visits</th></tr></thead>
         <tbody id="dealerBody"></tbody>
       </table>
     </div>
@@ -198,11 +198,22 @@
     <div class="sect">
       <h2>By tab</h2>
     </div>
-    <p class="card-sub">Unique clicks and page views per tab for the selected window. Big number excludes the Spyne team, the smaller number is the total.</p>
+    <p class="card-sub">Nav tab usage for the selected window. Unique clicks = users who clicked the tab. Tab opens = total clicks. These fire only on an explicit tab click, not on landing (see Top pages below for true page views). Big number excludes the Spyne team.</p>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>Tab</th><th>Unique clicks</th><th>Page views</th></tr></thead>
+        <thead><tr><th>Tab</th><th>Unique clicks</th><th>Tab opens</th></tr></thead>
         <tbody id="tblBody"></tbody>
+      </table>
+    </div>
+
+    <div class="sect">
+      <h2>Top pages by views</h2>
+    </div>
+    <p class="card-sub">True page views from Amplitude autocapture (fires on every page load, including default landings). Big number excludes the Spyne team, the smaller number is the total.</p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Page</th><th>Views</th><th>Unique viewers</th></tr></thead>
+        <tbody id="pagesBody"></tbody>
       </table>
     </div>
 
@@ -224,7 +235,7 @@
       </div>
     </div>
 
-    <p class="foot" id="foot">Source: Amplitude (US). Clean data excludes users whose email_id contains @spyne.ai. Page views are Nav_Tab_Clicked tab-open events. Session time is platform-wide (Amplitude sessions are not tab-scoped), so it appears as a KPI, not per tab. Dealers are grouped by team_id (rooftop). Visits are session_start events. Active dealers is capped at Amplitude's top 1,000 groups.</p>
+    <p class="foot" id="foot">Source: Amplitude (US). DAU and MAU are unique active users (last 1 and 30 days); stickiness is DAU/MAU. Clean data excludes users whose email_id contains @spyne.ai. "By tab" counts Nav_Tab_Clicked, which fires only on an explicit nav-tab click, so it undercounts default landings; "Top pages by views" uses Amplitude autocapture page views, the accurate page-load count. Dealers are grouped by team_id (rooftop); friendly dealer names are not yet a populated Amplitude property. Visits are session_start events. Active dealers is the exact distinct count (summed across team_id prefix partitions, not capped).</p>
   </main>
 
 <script>
@@ -292,13 +303,11 @@ function render(data){
   document.getElementById("sampleBanner").className="banner"+(sample?" show":"");
 
   var m=data.metrics||{}, win=WIN_LABEL[data.range||30];
-  document.getElementById("activeLabel").textContent="Active users, "+win;
   document.getElementById("sessLabel").textContent="Avg session, "+win;
-  document.getElementById("opensLabel").textContent="Page views, "+win;
-  setPair("active","activeTotal",m.active);
+  setPair("dau","dauTotal",m.dau);
+  setPair("mau","mauTotal",m.mau);
   setPair("stick","stickTotal",m.stickiness,fmtPct);
   setPair("sess","sessTotal",m.session,fmtDuration);
-  setPair("opens","opensTotal",m.tabOpens);
 
   document.getElementById("trendSub").textContent="Last "+(data.trendDays||30)+" days";
   var tr=data.trend||{};
@@ -327,9 +336,42 @@ async function load(){
     if(res.status===401){ showGate(); return; }
     var data=(res.status===500)?SAMPLE:await res.json();
     var so=document.getElementById("signoutLink"); if(so) so.hidden=!(data&&data.auth);
-    showApp(); render(data); loadDealers();
+    showApp(); render(data); loadDealers(); loadPages();
   }catch(e){ showApp(); render(SAMPLE); }
   finally{ if(btn) btn.disabled=false; }
+}
+
+// ---------- top pages by views (true page views) ----------
+function renderPages(data){
+  var body=document.getElementById("pagesBody");
+  var rows="";
+  (data.pages||[]).forEach(function(p){
+    rows+='<tr><td><span class="dealer-id">'+String(p.path)+'</span></td><td>'+pairCell(p.views)+'</td><td>'+pairCell(p.viewers)+'</td></tr>';
+  });
+  body.innerHTML=rows||'<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">No page-view data for this window.</td></tr>';
+}
+async function loadPages(){
+  var body=document.getElementById("pagesBody");
+  body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Loading…</td></tr>';
+  try{
+    var r=await fetch("/api/pages?range="+currentRange,{cache:"no-store"});
+    if(r.status===401){ showGate(); return; }
+    var data=await r.json();
+    if(data&&!data.error) renderPages(data);
+    else body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Page data unavailable.</td></tr>';
+  }catch(e){ body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Could not load pages.</td></tr>'; }
+}
+// exact distinct dealer count (replaces the capped "1,000+")
+async function loadDealerCount(){
+  try{
+    var r=await fetch("/api/dealer-count?range="+currentRange,{cache:"no-store"});
+    if(!r.ok) return;
+    var data=await r.json();
+    if(data&&data.exact){
+      document.getElementById("dlrActive").textContent=fmtInt(data.exact.clean);
+      document.getElementById("dlrActiveTotal").textContent=fmtInt(data.exact.total);
+    }
+  }catch(e){}
 }
 
 // ---------- dealer section ----------
@@ -339,8 +381,9 @@ function renderDealers(data){
   document.getElementById("dlrClicksLabel").textContent="Dealer clicks, "+win;
   document.getElementById("dlrVisitsLabel").textContent="Visits, "+win;
   var ad=data.activeDealers||{};
-  document.getElementById("dlrActive").textContent=data.cappedClean?"1,000+":fmtInt(ad.clean);
-  document.getElementById("dlrActiveTotal").textContent=data.cappedClean?"1,000+":fmtInt(ad.total);
+  // Quick (capped) count first; loadDealerCount() refines it to the exact number.
+  document.getElementById("dlrActive").textContent=data.cappedClean?"counting…":fmtInt(ad.clean);
+  document.getElementById("dlrActiveTotal").textContent=data.cappedClean?"…":fmtInt(ad.total);
   setPair("dlrClicks","dlrClicksTotal",data.clicks);
   setPair("dlrVisits","dlrVisitsTotal",data.visits);
   var rows="";
@@ -356,7 +399,7 @@ async function loadDealers(){
     var r=await fetch("/api/dealers?range="+currentRange,{cache:"no-store"});
     if(r.status===401){ showGate(); return; }
     var data=await r.json();
-    if(data&&!data.error) renderDealers(data);
+    if(data&&!data.error){ renderDealers(data); loadDealerCount(); }
     else body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Dealer data unavailable.</td></tr>';
   }catch(e){ body.innerHTML='<tr><td colspan="3" style="text-align:left;color:var(--color-text-secondary)">Could not load dealers.</td></tr>'; }
 }

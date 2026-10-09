@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/dealer-count.js": { "maxDuration": 60 },
+    "api/dealers.js": { "maxDuration": 30 },
+    "api/metrics.js": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/",
